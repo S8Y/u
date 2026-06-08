@@ -51,6 +51,26 @@ _patch_lock = threading.Lock()
 # Saved originals for unpatching
 _original_socket = _socket.socket
 _original_create_connection = _socket.create_connection
+_original_getaddrinfo = _socket.getaddrinfo
+
+
+def _pac_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    """Patched getaddrinfo that filters out IPv6 (AF_INET6) results.
+
+    Mullvad SOCKS5 relays do not support IPv6 destinations. By forcing
+    IPv4 DNS resolution at the lowest level, every connection path
+    (sync, async, socket.socket, loop.create_connection, loop.sock_connect)
+    receives IPv4 addresses and can be proxied successfully.
+
+    If no IPv4 records exist, falls back to the original (which may
+    return IPv6 addresses — these will bypass the proxy via should_bypass).
+    """
+    results = _original_getaddrinfo(host, port, family, type, proto, flags)
+    ipv4 = [r for r in results if r[0] == _socket.AF_INET]
+    if ipv4:
+        return ipv4
+    return results
+
 
 # ---------------------------------------------------------------------------
 # create_connection replacement (sync)
@@ -546,6 +566,9 @@ def patch(proxy_manager: ProxyManager) -> None:
         # 4. Patch asyncio event loop sock_connect (catches httpcore/anyio)
         asyncio.BaseEventLoop.sock_connect = _patched_sock_connect
 
+        # 5. Patch getaddrinfo to prefer IPv4 (Mullvad relays don't do IPv6)
+        _socket.getaddrinfo = _pac_getaddrinfo
+
         _patched = True
         logger.info(
             "pac-api: transport patched — all outbound TCP connections "
@@ -565,6 +588,7 @@ def unpatch() -> None:
 
         _socket.create_connection = _original_create_connection
         _socket.socket = _original_socket
+        _socket.getaddrinfo = _original_getaddrinfo
         asyncio.BaseEventLoop.create_connection = _ORIGINAL_LOOP_CREATE_CONNECTION
         asyncio.BaseEventLoop.sock_connect = _ORIGINAL_LOOP_SOCK_CONNECT
 
