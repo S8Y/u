@@ -24,8 +24,6 @@ from .proxy_manager import (
     PAC_URL_DEFAULT,
     PAC_REFRESH_SECONDS,
 )
-from .pac_fetcher import load_pac, start_refresh_thread
-from .transport import patch
 from . import schemas
 from . import tools
 
@@ -95,10 +93,14 @@ def register(ctx):
 
     logger.info("\033[1mpac-api: initializing...\033[0m")
 
-    # 1. Ensure dependencies
+    # 1. Ensure dependencies (before any socks import)
     _ensure_dependencies()
 
-    # 2. Create ProxyManager and fetch PAC (hardcoded Mullvad URL)
+    # 2. Lazy imports — these trigger import socks which needs to be installed first
+    from .pac_fetcher import load_pac, start_refresh_thread
+    from .transport import patch
+
+    # 3. Create ProxyManager and fetch PAC (hardcoded Mullvad URL)
     _manager = ProxyManager()
     pac_url = PAC_URL_DEFAULT
     logger.info("pac-api: initial PAC fetch from %s", pac_url)
