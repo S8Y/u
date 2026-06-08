@@ -15,17 +15,24 @@ rotating SOCKS5 proxy pool, with automatic failover and blacklisting.
 """
 
 import logging
+import os
 import subprocess
 import sys
 import threading
 
-from .proxy_manager import (
-    ProxyManager,
-    PAC_URL_DEFAULT,
-    PAC_REFRESH_SECONDS,
-)
-from . import schemas
-from . import tools
+# ---------------------------------------------------------------------------
+# Ensure the plugin's own directory is on sys.path so that relative or
+# absolute imports resolve regardless of how Hermes loads the module.
+# ---------------------------------------------------------------------------
+_plugin_dir = os.path.dirname(os.path.abspath(__file__))
+if _plugin_dir not in sys.path:
+    sys.path.insert(0, _plugin_dir)
+
+# Use absolute imports (no dots) — robust against how Hermes sets up the
+# package namespace.  All sibling modules import each other the same way.
+from proxy_manager import ProxyManager, PAC_URL_DEFAULT, PAC_REFRESH_SECONDS
+import schemas
+import tools
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +103,10 @@ def register(ctx):
     # 1. Ensure dependencies (before any socks import)
     _ensure_dependencies()
 
-    # 2. Lazy imports — these trigger import socks which needs to be installed first
-    from .pac_fetcher import load_pac, start_refresh_thread
-    from .transport import patch
+    # 2. Lazy imports — transport triggers import socks which must be
+    #    installed by _ensure_dependencies first.
+    from pac_fetcher import load_pac, start_refresh_thread
+    from transport import patch, unpatch
 
     # 3. Create ProxyManager and fetch PAC (hardcoded Mullvad URL)
     _manager = ProxyManager()
@@ -106,7 +114,7 @@ def register(ctx):
     logger.info("pac-api: initial PAC fetch from %s", pac_url)
     load_pac(_manager, url=pac_url)
 
-    # 3. Store manager in shared context
+    # 4. Store manager in shared context
     ctx.shared["pac_api_manager"] = _manager
 
     # 5. Patch the transport layer
@@ -182,7 +190,7 @@ def unregister(ctx):
         _manager._clear_proxy_env()
 
     # Restore original socket functions
-    from .transport import unpatch
+    from transport import unpatch
     unpatch()
 
     _manager = None
@@ -227,7 +235,7 @@ def _handle_slash(args: str, **kwargs) -> str:
     elif subcommand == "blacklist":
         return _slash_blacklist(pm)
     elif subcommand == "reload":
-        from .pac_fetcher import load_pac as _load_pac
+        from pac_fetcher import load_pac as _load_pac
         ok = _load_pac(pm, url=PAC_URL_DEFAULT)
         if ok:
             return (
@@ -237,7 +245,7 @@ def _handle_slash(args: str, **kwargs) -> str:
         else:
             return "\033[1mpac-api: PAC reload failed — check connection\033[0m"
     elif subcommand == "bypass":
-        from .proxy_manager import NO_PROXY_DOMAINS
+        from proxy_manager import NO_PROXY_DOMAINS
         domains = "\n  ".join(sorted(NO_PROXY_DOMAINS))
         return (
             "\033[1m━━━ NO_PROXY — Bypassed Domains ━━━\033[0m\n"

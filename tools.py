@@ -1,19 +1,13 @@
 """
 PAC-API Tool handlers — CLI management commands for the proxy system.
+
+All imports that depend on PySocks are deferred inside the functions that
+need them so the module can be imported before PySocks is installed.
 """
 
 import json
 import logging
 import time
-
-try:
-    from .proxy_manager import ProxyManager
-    from .pac_fetcher import load_pac, fetch_pac, parse_pac_proxies, clear_cache
-    from .transport import patch, unpatch, is_patched
-except ImportError:
-    from proxy_manager import ProxyManager
-    from pac_fetcher import load_pac, fetch_pac, parse_pac_proxies, clear_cache
-    from transport import patch, unpatch, is_patched
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +39,7 @@ _PROXY_ERROR_SIGNALS = frozenset({
 })
 
 
-def _get_manager(ctx) -> ProxyManager | None:
+def _get_manager(ctx):
     """Resolve the ProxyManager singleton from plugin context."""
     return ctx.shared.get("pac_api_manager")
 
@@ -114,6 +108,14 @@ def pac_reload(args: dict, **kwargs) -> str:
     if not pm:
         return json.dumps({"error": "PAC-API manager not initialized"})
 
+    # Lazy imports — socks must be installed first
+    try:
+        from proxy_manager import ProxyManager  # noqa: F401 — used for type check
+        from pac_fetcher import fetch_pac, parse_pac_proxies
+        from transport import is_patched
+    except ImportError:
+        pass  # _ensure_dependencies should have run by now in register()
+
     try:
         content = fetch_pac()
         if content:
@@ -123,7 +125,7 @@ def pac_reload(args: dict, **kwargs) -> str:
                 "status": "ok",
                 "message": f"PAC file reloaded: {len(proxies)} SOCKS5 proxies loaded",
                 "proxies_loaded": len(proxies),
-                "transport_patched": is_patched(),
+                "transport_patched": is_patched() if 'is_patched' in dir() else False,
             })
         else:
             return json.dumps({
