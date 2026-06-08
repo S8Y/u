@@ -338,6 +338,7 @@ def _socks_connect_socket(proxy, host: str, port: int, timeout=None):
 # ---------------------------------------------------------------------------
 
 _ORIGINAL_LOOP_CREATE_CONNECTION = asyncio.BaseEventLoop.create_connection
+_ORIGINAL_LOOP_SOCK_CONNECT = asyncio.BaseEventLoop.sock_connect
 
 
 async def _patched_create_connection(
@@ -454,6 +455,64 @@ async def _patched_create_connection(
         )
 
 
+async def _patched_sock_connect(
+    self,
+    sock,
+    address,
+):
+    """
+    Wrapper for asyncio.BaseEventLoop.sock_connect that routes TCP
+    connections through our SOCKS5 proxy for non-local destinations.
+
+    httpcore / anyio create sockets via socket.socket() then connect
+    via loop.sock_connect, which calls sock.connect() internally.
+    Our _PACAwareSocket.connect() intercepts that call, but
+    _PACAwareSocket is not a real socket — it has no file descriptor.
+    So we handle the proxy connection here and replace the sock's fd.
+    """
+    host, port = address if isinstance(address, tuple) else (address, 0)
+
+    # Bypass for local/messenger destinations
+    if should_bypass(host):
+        return await _ORIGINAL_LOOP_SOCK_CONNECT(self, sock, address)
+
+    pm = _proxy_manager
+    if pm is None:
+        return await _ORIGINAL_LOOP_SOCK_CONNECT(self, sock, address)
+
+    # Check if this is a _PACAwareSocket (wrapper, not a real socket)
+    is_fake = type(sock).__name__ == '_PACAwareSocket'
+
+    if not is_fake:
+        # Real socket — just do the original sock_connect
+        return await _ORIGINAL_LOOP_SOCK_CONNECT(self, sock, address)
+
+    # _PACAwareSocket — create the proxy connection and swap the fd
+    try:
+        socks_sock = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _proxy_manager.send_with_retry(
+                host=host,
+                port=port,
+                connect_fn=_socks_connect_socket,
+            ),
+        )
+        # Detach the proxied socket's fd and attach it to the original
+        # _PACAwareSocket so the event loop sees a real connected socket.
+        fd = socks_sock.detach()
+        # Now we need to make a REAL socket with this fd
+        # and use that for the connection
+        real_sock = _socket.socket(fileno=fd)
+        return await _ORIGINAL_LOOP_SOCK_CONNECT(self, real_sock, (host, port))
+    except Exception as e:
+        logger.warning(
+            "pac-api: sock_connect proxy failed for %s:%s — "
+            "falling back to direct: %s",
+            host, port, e,
+        )
+        return await _ORIGINAL_LOOP_SOCK_CONNECT(self, sock, address)
+
+
 # ---------------------------------------------------------------------------
 # Patch / unpatch
 # ---------------------------------------------------------------------------
@@ -484,6 +543,9 @@ def patch(proxy_manager: ProxyManager) -> None:
         # 3. Patch asyncio event loop create_connection (catches async paths)
         asyncio.BaseEventLoop.create_connection = _patched_create_connection
 
+        # 4. Patch asyncio event loop sock_connect (catches httpcore/anyio)
+        asyncio.BaseEventLoop.sock_connect = _patched_sock_connect
+
         _patched = True
         logger.info(
             "pac-api: transport patched — all outbound TCP connections "
@@ -504,6 +566,7 @@ def unpatch() -> None:
         _socket.create_connection = _original_create_connection
         _socket.socket = _original_socket
         asyncio.BaseEventLoop.create_connection = _ORIGINAL_LOOP_CREATE_CONNECTION
+        asyncio.BaseEventLoop.sock_connect = _ORIGINAL_LOOP_SOCK_CONNECT
 
         _patched = False
         _proxy_manager = None
