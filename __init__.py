@@ -15,11 +15,9 @@ rotating SOCKS5 proxy pool, with automatic failover and blacklisting.
 """
 
 import logging
-import os
 import subprocess
 import sys
 import threading
-from pathlib import Path
 
 from .proxy_manager import (
     ProxyManager,
@@ -100,19 +98,14 @@ def register(ctx):
     # 1. Ensure dependencies
     _ensure_dependencies()
 
-    # 2. Resolve PAC URL (from env or default)
-    pac_url = os.environ.get("PAC_API_URL", PAC_URL_DEFAULT)
-
-    # 3. Create ProxyManager
+    # 2. Create ProxyManager and fetch PAC (hardcoded Mullvad URL)
     _manager = ProxyManager()
-
-    # Store in shared context so tools and hooks can access it
-    ctx.shared["pac_api_manager"] = _manager
-    ctx.shared["pac_api_url"] = pac_url
-
-    # 4. Initial PAC fetch (synchronous, at startup)
+    pac_url = PAC_URL_DEFAULT
     logger.info("pac-api: initial PAC fetch from %s", pac_url)
     load_pac(_manager, url=pac_url)
+
+    # 3. Store manager in shared context
+    ctx.shared["pac_api_manager"] = _manager
 
     # 5. Patch the transport layer
     patch(_manager)
@@ -233,8 +226,7 @@ def _handle_slash(args: str, **kwargs) -> str:
         return _slash_blacklist(pm)
     elif subcommand == "reload":
         from .pac_fetcher import load_pac as _load_pac
-        pac_url = os.environ.get("PAC_API_URL", PAC_URL_DEFAULT)
-        ok = _load_pac(pm, url=pac_url)
+        ok = _load_pac(pm, url=PAC_URL_DEFAULT)
         if ok:
             return (
                 "\033[1mpac-api: PAC reloaded\033[0m\n"

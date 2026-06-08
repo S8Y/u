@@ -51,11 +51,10 @@ The plugin auto-installs PySocks on startup. To install manually:
 pip install PySocks
 ```
 
-## Configuration
+No configuration needed. Enable the plugin and it fetches the Mullvad proxy
+list automatically on startup.
 
-| Env var       | Default                        | Description                |
-|---------------|--------------------------------|----------------------------|
-| `PAC_API_URL` | Mullvad PAC URL                | Override the PAC source    |
+The plugin has zero required env vars, zero config keys — just enable and go.
 
 ## Usage
 
