@@ -547,6 +547,10 @@ class ProxyManager:
         total failure (falling back to direct connection).
         """
         if not self._enabled or should_bypass(host):
+            logger.info(
+                "pac-api: \033[90m— %s:%s bypassed (NO_PROXY)\033[0m",
+                host, port,
+            )
             return connect_fn(None, host, port, **kwargs)
 
         # If proxy is disabled (5-min cooldown), go direct immediately
@@ -571,7 +575,11 @@ class ProxyManager:
 
             try:
                 result = connect_fn(proxy, host, port, **kwargs)
-                # Success — reset failure state
+                # Success — log the proxied connection and reset failure state
+                logger.info(
+                    "pac-api: \033[36m→ %s:%s via %s\033[0m",
+                    host, port, proxy.addr,
+                )
                 self.reset_failure_state()
                 return result
             except Exception as e:

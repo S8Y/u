@@ -40,8 +40,9 @@ _PROXY_ERROR_SIGNALS = frozenset({
 
 
 def _get_manager(ctx):
-    """Resolve the ProxyManager singleton from plugin context."""
-    return ctx.shared.get("pac_api_manager")
+    """Resolve the ProxyManager singleton from shared state."""
+    import _state
+    return _state._manager
 
 
 def _looks_like_proxy_error(error_text: str) -> bool:

@@ -114,8 +114,9 @@ def register(ctx):
     logger.info("pac-api: initial PAC fetch from %s", pac_url)
     load_pac(_manager, url=pac_url)
 
-    # 4. Store manager in shared context
-    ctx.shared["pac_api_manager"] = _manager
+    # 4. Store manager in shared state (ctx.shared does not exist in Hermes)
+    import _state
+    _state._manager = _manager
 
     # 5. Patch the transport layer
     patch(_manager)
