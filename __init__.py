@@ -32,7 +32,7 @@ if _plugin_dir not in sys.path:
 # package namespace.  All sibling modules import each other the same way.
 from proxy_manager import ProxyManager, PAC_URL_DEFAULT, PAC_REFRESH_SECONDS
 import schemas
-import tools
+import pac_tools as tools
 
 logger = logging.getLogger(__name__)
 
