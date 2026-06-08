@@ -1,0 +1,24 @@
+name: pac-api
+version: 1.0.0
+description: >
+  PAC-based SOCKS5 proxy routing for all outbound Hermes API calls.
+  Fetches a PAC file from Mullvad on startup and every 12h, rotates
+  through SOCKS5 proxies every 3 minutes, blacklists failed proxies
+  for 24h, and retries up to 3 times before falling back to direct.
+provides_tools:
+  - pac_status
+  - pac_reload
+  - pac_blacklist
+  - pac_cycle
+provides_hooks:
+  - pre_llm_call
+  - post_tool_call
+requires_env:
+  - name: PAC_API_URL
+    description: "URL of the PAC file to use for proxy routing"
+    default: "https://raw.githubusercontent.com/S8Y/mullvad-pac/refs/heads/main/pac/mullvad.pac"
+    secret: false
+requires_packages:
+  - name: PySocks
+    description: "SOCKS5 proxy support"
+    import_name: socks
