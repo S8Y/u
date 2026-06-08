@@ -249,6 +249,12 @@ def should_bypass(host: str) -> bool:
     if is_local_destination(host_lower):
         return True
 
+    # IPv6 addresses — Mullvad SOCKS5 proxies are IPv4-only and fail
+    # with TTL expired for IPv6 destinations. Bypass to avoid filling
+    # the blacklist with good proxies.
+    if ":" in host_lower:
+        return True
+
     return False
 
 

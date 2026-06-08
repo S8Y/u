@@ -24,6 +24,15 @@ import socks as _socks
 import threading
 from typing import Optional, Callable
 
+
+def _has_colon(s: str) -> bool:
+    """Return True if *s* looks like an IPv6 address (contains ':').
+
+    Used to distinguish hostnames from already-resolved IPv6 addresses
+    so we can force IPv4 resolution for hostnames before the SOCKS5
+    handshake."""
+    return ":" in s
+
 try:
     from .proxy_manager import ProxyManager, should_bypass
 except ImportError:
@@ -99,6 +108,9 @@ def _socks_connect(
     Establish a TCP connection, optionally through a SOCKS5 proxy.
 
     If proxy is None, connects directly (fallback path).
+
+    For SOCKS5 connections, hostnames are resolved to IPv4 addresses first
+    because Mullvad SOCKS5 relays do not support IPv6 destinations.
     """
     if proxy is None:
         return _original_create_connection(
@@ -107,6 +119,23 @@ def _socks_connect(
             source_address=source_address,
             all_errors=all_errors,
         )
+
+    # Force IPv4 resolution: resolve hostname to an IPv4 address locally
+    # so the SOCKS5 handshake sends an IPv4 address, not a hostname
+    # or an IPv6 address (Mullvad relays don't support IPv6 destinations).
+    connect_host = host
+    if _has_colon(host) is False:
+        # host is a hostname, not an IP — resolve to IPv4
+        try:
+            info = _socket.getaddrinfo(
+                host, port, _socket.AF_INET, _socket.SOCK_STREAM
+            )
+            if info:
+                connect_host = info[0][4][0]
+        except Exception:
+            pass  # fall back to original hostname
+    # If host is an IPv6 address (contains ':'), it stays as-is and will
+    # be bypassed by should_bypass before reaching send_with_retry.
 
     # SOCKS5 via PySocks
     sock = _socks.socksocket()
@@ -119,7 +148,7 @@ def _socks_connect(
     )
     if timeout is not None and timeout is not _socket._GLOBAL_DEFAULT_TIMEOUT:
         sock.settimeout(timeout)
-    sock.connect((host, port))
+    sock.connect((connect_host, port))
     return sock
 
 
@@ -267,6 +296,9 @@ def _socks_connect_socket(proxy, host: str, port: int, timeout=None):
     """
     Create and connect a SOCKS5 socket through the given proxy.
     Returns the connected socks socket.
+
+    Hostnames are resolved to IPv4 first (Mullvad relays don't support
+    IPv6 destinations in the SOCKS5 handshake).
     """
     if proxy is None:
         sock = _original_socket()
@@ -274,6 +306,18 @@ def _socks_connect_socket(proxy, host: str, port: int, timeout=None):
             sock.settimeout(timeout)
         sock.connect((host, port))
         return sock
+
+    # Force IPv4 resolution for hostnames (same as _socks_connect)
+    connect_host = host
+    if _has_colon(host) is False:
+        try:
+            info = _socket.getaddrinfo(
+                host, port, _socket.AF_INET, _socket.SOCK_STREAM
+            )
+            if info:
+                connect_host = info[0][4][0]
+        except Exception:
+            pass
 
     sock = _socks.socksocket()
     sock.set_proxy(
@@ -285,7 +329,7 @@ def _socks_connect_socket(proxy, host: str, port: int, timeout=None):
     )
     if timeout is not None:
         sock.settimeout(timeout)
-    sock.connect((host, port))
+    sock.connect((connect_host, port))
     return sock
 
 
