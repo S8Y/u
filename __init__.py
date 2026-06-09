@@ -135,6 +135,9 @@ def register(ctx):
         import run_agent as _ra
 
         _orig_build = _ra.AIAgent._build_keepalive_http_client
+        logger.info(
+            "\033[1mpac-api: found AIAgent._build_keepalive_http_client, monkey-patching...\033[0m"
+        )
 
         def _pac_keepalive_client(base_url: str = ""):
             # Call original to get the keepalive httpx.Client
@@ -159,8 +162,8 @@ def register(ctx):
         _ra.AIAgent._build_keepalive_http_client = _pac_keepalive_client
         logger.debug("pac-api: patched Hermes _build_keepalive_http_client")
     except Exception as exc:
-        logger.debug(
-            "pac-api: could not patch _build_keepalive_http_client — %s",
+        logger.warning(
+            "\033[1mpac-api: could not patch AIAgent._build_keepalive_http_client — %s\033[0m",
             exc,
         )
 
