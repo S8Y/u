@@ -131,6 +131,10 @@ def register(ctx):
     #     client uses a default transport (no custom HTTPTransport with
     #     socket_options).  The default transport goes through
     #     socket.create_connection which is caught by our sync patch.
+    #
+    #     NOTE: _build_keepalive_http_client is a @staticmethod in Hermes.
+    #     Our replacement MUST also be a @staticmethod, otherwise Python
+    #     will pass `self` as the first arg when called via an instance.
     try:
         # Try to import run_agent (Hermes root module)
         import run_agent as _ra
@@ -140,6 +144,7 @@ def register(ctx):
             "\033[1mpac-api: patching AIAgent._build_keepalive_http_client\033[0m"
         )
 
+        @staticmethod
         def _pac_keepalive_client(base_url: str = ""):
             client = _orig_build(base_url)
             if client is None:
