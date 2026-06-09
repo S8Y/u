@@ -132,40 +132,58 @@ def register(ctx):
     #     socket_options).  The default transport goes through
     #     socket.create_connection which is caught by our sync patch.
     try:
+        # Try to import run_agent (Hermes root module)
         import run_agent as _ra
-
         _orig_build = _ra.AIAgent._build_keepalive_http_client
+
         logger.info(
-            "\033[1mpac-api: found AIAgent._build_keepalive_http_client, monkey-patching...\033[0m"
+            "\033[1mpac-api: patching AIAgent._build_keepalive_http_client\033[0m"
         )
 
         def _pac_keepalive_client(base_url: str = ""):
-            # Call original to get the keepalive httpx.Client
             client = _orig_build(base_url)
             if client is None:
                 return None
-            # The custom HTTPTransport in the original client bypasses
-            # socket.create_connection in some httpx/httpcore versions.
-            # Return a plain httpx.Client (no custom transport) so our
-            # socket patches catch the connections.
             import httpx as _httpx
             plain = _httpx.Client(
                 timeout=client.timeout,
                 verify=client.verify,
                 trust_env=client.trust_env,
             )
-            # Copy over custom headers, auth, etc.
             plain.headers = client.headers
             plain.auth = client.auth
             return plain
 
         _ra.AIAgent._build_keepalive_http_client = _pac_keepalive_client
-        logger.debug("pac-api: patched Hermes _build_keepalive_http_client")
+        logger.info(
+            "\033[1mpac-api: AIAgent._build_keepalive_http_client patched\033[0m"
+        )
     except Exception as exc:
         logger.warning(
-            "\033[1mpac-api: could not patch AIAgent._build_keepalive_http_client — %s\033[0m",
+            "\033[1mpac-api: could not patch AIAgent,"
+            " fallback: patching httpx.Client directly — %s\033[0m",
             exc,
         )
+        try:
+            # Fallback: patch httpx.Client to strip custom transports
+            import httpx as _httpx
+
+            _orig_http_client_init = _httpx.Client.__init__
+
+            def _pac_http_client_init(self, *, transport=None, **kw):
+                # Remove the custom HTTPTransport so connections go through
+                # our socket.create_connection patch
+                _orig_http_client_init(self, transport=None, **kw)
+
+            _httpx.Client.__init__ = _pac_http_client_init
+            logger.info(
+                "\033[1mpac-api: httpx.Client.__init__ patched\033[0m"
+            )
+        except Exception as exc2:
+            logger.warning(
+                "\033[1mpac-api: could not patch httpx.Client — %s\033[0m",
+                exc2,
+            )
 
     # 8. Register CLI management tools (for LLM to call via function calling)
     ctx.register_tool(
