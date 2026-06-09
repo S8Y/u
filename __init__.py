@@ -118,15 +118,6 @@ def register(ctx):
     import _state
     _state._manager = _manager
 
-    # 4b. Set proxy env vars so Hermes `_create_openai_client` skips its
-    #     custom httpx.HTTPTransport (issue #11609).  When a proxy env var
-    #     is present, Hermes uses httpx's default transport, which goes
-    #     through socket.create_connection — caught by our patch below.
-    #     We set NO_PROXY to "*" to prevent httpx from actually using
-    #     the env proxy for any host (the socket patch handles routing).
-    os.environ.setdefault("ALL_PROXY", "http://127.0.0.1:0")
-    os.environ.setdefault("NO_PROXY", "*")
-
     # 5. Patch the transport layer
     patch(_manager)
     logger.info(
@@ -136,7 +127,44 @@ def register(ctx):
     # 6. Start background PAC refresh thread (every 12h)
     _stop_event = start_refresh_thread(_manager, url=pac_url)
 
-    # 7. Register CLI management tools (for LLM to call via function calling)
+    # 7. Monkey-patch Hermes' _build_keepalive_http_client so the httpx
+    #     client uses a default transport (no custom HTTPTransport with
+    #     socket_options).  The default transport goes through
+    #     socket.create_connection which is caught by our sync patch.
+    try:
+        import run_agent as _ra
+
+        _orig_build = _ra.AIAgent._build_keepalive_http_client
+
+        def _pac_keepalive_client(base_url: str = ""):
+            # Call original to get the keepalive httpx.Client
+            client = _orig_build(base_url)
+            if client is None:
+                return None
+            # The custom HTTPTransport in the original client bypasses
+            # socket.create_connection in some httpx/httpcore versions.
+            # Return a plain httpx.Client (no custom transport) so our
+            # socket patches catch the connections.
+            import httpx as _httpx
+            plain = _httpx.Client(
+                timeout=client.timeout,
+                verify=client.verify,
+                trust_env=client.trust_env,
+            )
+            # Copy over custom headers, auth, etc.
+            plain.headers = client.headers
+            plain.auth = client.auth
+            return plain
+
+        _ra.AIAgent._build_keepalive_http_client = _pac_keepalive_client
+        logger.debug("pac-api: patched Hermes _build_keepalive_http_client")
+    except Exception as exc:
+        logger.debug(
+            "pac-api: could not patch _build_keepalive_http_client — %s",
+            exc,
+        )
+
+    # 8. Register CLI management tools (for LLM to call via function calling)
     ctx.register_tool(
         name="pac_status",
         toolset="pac_api",
