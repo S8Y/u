@@ -118,6 +118,15 @@ def register(ctx):
     import _state
     _state._manager = _manager
 
+    # 4b. Set proxy env vars so Hermes `_create_openai_client` skips its
+    #     custom httpx.HTTPTransport (issue #11609).  When a proxy env var
+    #     is present, Hermes uses httpx's default transport, which goes
+    #     through socket.create_connection — caught by our patch below.
+    #     We set NO_PROXY to "*" to prevent httpx from actually using
+    #     the env proxy for any host (the socket patch handles routing).
+    os.environ.setdefault("ALL_PROXY", "http://127.0.0.1:0")
+    os.environ.setdefault("NO_PROXY", "*")
+
     # 5. Patch the transport layer
     patch(_manager)
     logger.info(

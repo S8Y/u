@@ -93,12 +93,6 @@ def _pac_create_connection(
     """
     host, port = address
 
-    # DEBUG — confirm this sync path is reached
-    logger.info(
-        "pac-api: [sync_create_connection] %s:%s (bypass=%s)",
-        host, port, should_bypass(host),
-    )
-
     # Local / messenger destinations -> direct, no proxy
     if should_bypass(host):
         return _original_create_connection(
@@ -407,13 +401,6 @@ async def _patched_create_connection(
     Wrapper for asyncio.BaseEventLoop.create_connection that routes
     TCP connections through our SOCKS5 proxy for non-local destinations.
     """
-    # DEBUG — confirm this patch is reached for LLM API calls
-    if host and port:
-        logger.info(
-            "pac-api: [create_connection] %s:%s (bypass=%s)",
-            host, port, should_bypass(host),
-        )
-
     # If no host/port or is a bypass destination (local / messenger), use original
     if host is None or port is None or should_bypass(host):
         return await _ORIGINAL_LOOP_CREATE_CONNECTION(
@@ -526,12 +513,6 @@ async def _patched_sock_connect(
     So we handle the proxy connection here and replace the sock's fd.
     """
     host, port = address if isinstance(address, tuple) else (address, 0)
-
-    # DEBUG — confirm this patch is reached for LLM API calls
-    logger.info(
-        "pac-api: [sock_connect] %s:%s (type=%s, bypass=%s)",
-        host, port, type(sock).__name__, should_bypass(host),
-    )
 
     # Bypass for local/messenger destinations
     if should_bypass(host):
