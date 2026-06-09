@@ -150,9 +150,12 @@ def register(ctx):
             if client is None:
                 return None
             import httpx as _httpx
+            # NOTE: `verify` is not a public Client attribute in modern httpx;
+            # it is handled at the transport level.  We only carry over the
+            # public attributes that exist (timeout, trust_env) and let the
+            # plain Client use its default verify (True / SSL enabled).
             plain = _httpx.Client(
                 timeout=client.timeout,
-                verify=client.verify,
                 trust_env=client.trust_env,
             )
             plain.headers = client.headers
