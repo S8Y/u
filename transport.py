@@ -93,6 +93,12 @@ def _pac_create_connection(
     """
     host, port = address
 
+    # DEBUG — confirm this sync path is reached
+    logger.info(
+        "pac-api: [sync_create_connection] %s:%s (bypass=%s)",
+        host, port, should_bypass(host),
+    )
+
     # Local / messenger destinations -> direct, no proxy
     if should_bypass(host):
         return _original_create_connection(
