@@ -359,6 +359,28 @@ def _socks_connect_socket(proxy, host: str, port: int, timeout=None):
 
 _ORIGINAL_LOOP_CREATE_CONNECTION = asyncio.BaseEventLoop.create_connection
 _ORIGINAL_LOOP_SOCK_CONNECT = asyncio.BaseEventLoop.sock_connect
+_ORIGINAL_LOOP_GETADDRINFO = asyncio.BaseEventLoop.getaddrinfo
+
+
+async def _patched_loop_getaddrinfo(
+    self, host, port, *,
+    family=0, type=0, proto=0, flags=0,
+):
+    """Patched event-loop getaddrinfo that filters out IPv6 results.
+
+    anyio / httpcore use loop.getaddrinfo() to resolve hostnames before
+    creating sockets.  By filtering out AF_INET6 results here, every
+    async connection gets IPv4 addresses that work through Mullvad
+    SOCKS5 relays (which don't support IPv6 destinations).
+    """
+    results = await _ORIGINAL_LOOP_GETADDRINFO(
+        self, host, port,
+        family=family, type=type, proto=proto, flags=flags,
+    )
+    ipv4 = [r for r in results if r[0] == _socket.AF_INET]
+    if ipv4:
+        return ipv4
+    return results
 
 
 async def _patched_create_connection(
@@ -379,6 +401,13 @@ async def _patched_create_connection(
     Wrapper for asyncio.BaseEventLoop.create_connection that routes
     TCP connections through our SOCKS5 proxy for non-local destinations.
     """
+    # DEBUG — confirm this patch is reached for LLM API calls
+    if host and port:
+        logger.info(
+            "pac-api: [create_connection] %s:%s (bypass=%s)",
+            host, port, should_bypass(host),
+        )
+
     # If no host/port or is a bypass destination (local / messenger), use original
     if host is None or port is None or should_bypass(host):
         return await _ORIGINAL_LOOP_CREATE_CONNECTION(
@@ -492,6 +521,12 @@ async def _patched_sock_connect(
     """
     host, port = address if isinstance(address, tuple) else (address, 0)
 
+    # DEBUG — confirm this patch is reached for LLM API calls
+    logger.info(
+        "pac-api: [sock_connect] %s:%s (type=%s, bypass=%s)",
+        host, port, type(sock).__name__, should_bypass(host),
+    )
+
     # Bypass for local/messenger destinations
     if should_bypass(host):
         return await _ORIGINAL_LOOP_SOCK_CONNECT(self, sock, address)
@@ -557,8 +592,8 @@ def patch(proxy_manager: ProxyManager) -> None:
         # 1. Patch socket.create_connection (catches sync httpx, requests, urllib3)
         _socket.create_connection = _pac_create_connection
 
-        # 2. Patch socket.socket (catches libraries that construct sockets directly)
-        _socket.socket = _PACAwareSocket  # type: ignore
+        # 2. (removed — _PACAwareSocket breaks trio/anyio/httpcore)
+        #    socket.create_connection + asyncio patches below cover all paths.
 
         # 3. Patch asyncio event loop create_connection (catches async paths)
         asyncio.BaseEventLoop.create_connection = _patched_create_connection
@@ -568,6 +603,7 @@ def patch(proxy_manager: ProxyManager) -> None:
 
         # 5. Patch getaddrinfo to prefer IPv4 (Mullvad relays don't do IPv6)
         _socket.getaddrinfo = _pac_getaddrinfo
+        asyncio.BaseEventLoop.getaddrinfo = _patched_loop_getaddrinfo
 
         _patched = True
         logger.info(
@@ -587,8 +623,9 @@ def unpatch() -> None:
             return
 
         _socket.create_connection = _original_create_connection
-        _socket.socket = _original_socket
+        _socket.socket = _original_socket  # restore even though we don't patch it
         _socket.getaddrinfo = _original_getaddrinfo
+        asyncio.BaseEventLoop.getaddrinfo = _ORIGINAL_LOOP_GETADDRINFO
         asyncio.BaseEventLoop.create_connection = _ORIGINAL_LOOP_CREATE_CONNECTION
         asyncio.BaseEventLoop.sock_connect = _ORIGINAL_LOOP_SOCK_CONNECT
 
